@@ -1,11 +1,16 @@
 import dash
+import numpy as np
+
 from fintech_ibkr import *
+from ibapi.contract import Contract
 from dash import dcc
 from dash import html
 import plotly.graph_objects as go
 from dash.dependencies import Input, Output, State
 import pickle
+from datetime import date
 from time import sleep
+from os import listdir
 
 # Make a Dash app!
 app = dash.Dash(__name__)
@@ -34,12 +39,28 @@ app.layout = html.Div([
         # Style it so that the submit button appears beside the input.
         style={'display': 'inline-block'}
     ),
-    # Submit button
-    html.Button('Submit', id='submit-button', n_clicks=0),
     # Line break
     html.Br(),
     # Div to hold the initial instructions and the updated info once submit is pressed
-    html.Div(id='currency-output', children='Enter a currency code and press submit'),
+    html.Div(id='currency-output', children='Enter a currency code'),
+    # Numeric input for the trade amount
+    html.Br(),
+    html.Div(['End Date in YYYYMMDD HH:MM:SS Format:', dcc.Input(id='end-date', value='',type='text')]),
+    html.Br(),
+    html.Div(['Duration:', dcc.Input(id='duration-num', value='30', type='number')]),
+    html.Div([dcc.RadioItems(['S', 'D', 'W', 'M', 'Y'], value='D', id='duration-unit', inline=True)]),
+    html.Br(),
+    html.Div(['Bar Size:', dcc.Dropdown(['1 secs','5 secs','10 secs','15 sec','30 secs',
+                                         '1 min','2 mins','3 mins', '5 mins','10 mins','15 mins','20 mins','30 mins','1 hour','2 hours',
+                                         '3 hours','4 hours','8 hours', '1 day', '1 week', '1 month'],value='1 day',id='bar-size')]),
+    html.Br(),
+    html.Div(['What to Show:', dcc.Dropdown(['MIDPOINT','TRADES', 'BID', 'ASK'], value='MIDPOINT', id='what-to-show')]),
+    html.Br(),
+    html.Div(['Retrieve Data Only From Regular Trading Hours?:', dcc.RadioItems(["Yes", "No"], value='Yes', id='use-RTH')]),
+    html.Br(),
+    # Submit button
+    html.Button('Submit', id='submit-button', n_clicks=0),
+    html.Br(),
     # Div to hold the candlestick graph
     html.Div([dcc.Graph(id='candlestick-graph')]),
     # Another line break
@@ -72,25 +93,26 @@ app.layout = html.Div([
     Output(component_id='currency-output', component_property='children'),
     Output(component_id='candlestick-graph', component_property='figure')
     ],
-    Input('submit-button', 'n_clicks'), # The callback function will fire when the submit button's n_clicks changes
+    Input('submit-button', 'n_clicks'),# The callback function will fire when the submit button's n_clicks changes
     # The currency input's value is passed in as a "State" because if the user is typing and the value changes, then
     #   the callback function won't run. But the callback does run because the submit button was pressed, then the value
     #   of 'currency-input' at the time the button was pressed DOES get passed in.
-    State('currency-input', 'value')
+    [State('currency-input', 'value'), State('end-date', 'value'), State('duration-num','value'), State('duration-unit','value'),
+     State('bar-size', 'value'),State('what-to-show', 'value'), State('use-RTH', 'value')]
 )
-def update_candlestick_graph(n_clicks, value): # n_clicks doesn't get used, we only include it for the dependency.
+def update_candlestick_graph(n_clicks, currency, date, duration_num, duration_unit,bar_size,what_to_show,use_rth): # n_clicks doesn't get used, we only include it for the dependency.
 
     # First things first -- what currency pair history do you want to fetch?
     # Define it as a contract object!
     contract = Contract()
-    contract.symbol   = # set this to the FIRST currency (before the ".")
+    contract.symbol  = currency.split('.')[0] # set this to the FIRST currency (before the ".")
     contract.secType  = 'CASH'
     contract.exchange = 'IDEALPRO' # 'IDEALPRO' is the currency exchange.
-    contract.currency = # set this to the FIRST currency (before the ".")
+    contract.currency = currency.split('.')[1] # set this to the FIRST currency (before the ".")
 
     # Wait until ibkr_app runs the query and saves the historical prices csv
-    while not 'currency_pair_history.csv' in listdir():
-        sleep(1)
+    #while not 'currency_pair_history.csv' in listdir():
+        #sleep(1)
 
     # Make the historical data request.
     # Where indicated below, you need to make a REACTIVE INPUT for each one of
@@ -100,14 +122,17 @@ def update_candlestick_graph(n_clicks, value): # n_clicks doesn't get used, we o
     # Some default values are provided below to help with your testing.
     # Don't forget -- you'll need to update the signature in this callback
     #   function to include your new vars!
-    cph = req_historical_data(
-        tickerId = 1,
+    if use_rth =='Yes':
+        rth = True
+    else:
+        rth= False
+    cph = fetch_historical_data(
         contract = contract,
-        endDateTime='',           # <-- make a reactive input
-        durationStr='30 D',       # <-- make a reactive input
-        barSizeSetting='1 hour',  # <-- make a reactive input
-        whatToShow='MIDPOINT',    # <-- make a reactive input
-        useRTH=True               # <-- make a reactive input
+        endDateTime= date,           # <-- make a reactive input
+        durationStr= duration_num + ' ' + duration_unit,       # <-- make a reactive input
+        barSizeSetting=bar_size,  # <-- make a reactive input
+        whatToShow=what_to_show,    # <-- make a reactive input
+        useRTH=rth,              # <-- make a reactive input
     )
 
     # Make the candlestick figure
@@ -124,10 +149,10 @@ def update_candlestick_graph(n_clicks, value): # n_clicks doesn't get used, we o
     )
 
     # Give the candlestick figure a title
-    fig.update_layout(title=('Exchange Rate: ' + value))
+    fig.update_layout(title=('Exchange Rate: ' + currency))
 
     # Return your updated text to currency-output, and the figure to candlestick-graph outputs
-    return ('Submitted query for ' + value), fig
+    return ('Submitted query for ' + currency), fig
 
 # Callback for what to do when trade-button is pressed
 @app.callback(
